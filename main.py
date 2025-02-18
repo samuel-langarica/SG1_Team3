@@ -152,22 +152,6 @@ class Factory(object):
         else:
             self.total_produced += 1
 
-    def work_station_with_event(self, station, event, item_id):
-        """
-        If you want to do 'request = station.resource.request()' separately,
-        you can do a manual approach that handles the release.
-        """
-        # Wait for the request to be granted
-        yield event
-
-        # Now we hold the resource, but we must release it ourselves after usage:
-        # Start the station's process
-        yield self._env.process(station.process_item())
-
-        # Manually release:
-        station.resource.release(event)
-
-        print(f"Time {self._env.now}: Item {item_id} finished at Station {station.station_id}")
 
     def process_at_station(self, station, item_id, request=None):
         if request is not None:

@@ -42,6 +42,7 @@ class Station:
         self.busy_time = 0.0
         self.last_start_busy = 0.0  # track when station last started processing an item
         self.env.process(self.restock_process(factory))
+        self.restocking_time = 0.0
 
     def start_processing(self):
         self.last_start_busy = self.env.now
@@ -66,10 +67,10 @@ class Station:
             if self.bin.level < 5:
                 with factory.restock_devices.request() as req:
                     yield req
-                    # Delay for restock
-                    delay = normal_delay(mean=2.0, std_dev=1.0)
+                    start_restocking_time = self.env.now
+                    delay = normal_time(mean=2.0, std_dev=1.0)
                     yield self.env.timeout(delay)
-                    # Add new material
+                    self.restocking_time += (self.env.now - start_restocking_time)
                     yield self.bin.put(25)
             else:
                 # Check less frequently if still enough material
@@ -164,6 +165,7 @@ class Factory(object):
             station.total_waiting_time += wait_time
             self.num_waits += 1
 
+
     def process_at_station(self, station, item_id, request=None):
         wait_start = self._env.now
         if request is not None:
@@ -196,10 +198,13 @@ print(f"Faulty products rate: {(factory.faulty_products/(factory.faulty_products
 print(f"Total time spent waiting for a Station: {factory.total_wait_time:.2f}")
 
 print(f"Average bottleneck delay: {factory.total_wait_time/factory.num_waits:.2f} time units")
+total_restocking_time = 0
 for i, station in enumerate(factory.stations):
     occupancy_rate = station.busy_time / env.now
+    total_restocking_time += station.restocking_time
     print(f"Station {station.station_id}:")
     print(f"  - Occupancy (busy) rate: {occupancy_rate * 100:.2f}%")
-    print(f"  - Total downtime: {station.total_downtime:.2f}")
+    print(f"  - Total time getting fixed: {station.total_downtime:.2f}")
     print(f"  - Number of breakdowns: {station.num_breakdowns}")
     print(f"  - Total time items waited to be processed: {station.total_waiting_time:.2f}")
+print(f"Restocking device occupancy (busy) rate: {(total_restocking_time / env.now)*100:.2f}%")

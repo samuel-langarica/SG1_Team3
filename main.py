@@ -141,17 +141,16 @@ class Factory(object):
         res = yield req4 | req5
         if req4 in res:
             yield self._env.process(self.process_at_station(self.stations[3], item_id, request=req4))
-            yield self._env.process(self.process_at_station(self.stations[4], item_id))
+            yield self._env.process(self.process_at_station(self.stations[4], item_id, request=req5))
         else:
             yield self._env.process(self.process_at_station(self.stations[4], item_id, request=req5))
-            yield self._env.process(self.process_at_station(self.stations[3], item_id))
+            yield self._env.process(self.process_at_station(self.stations[3], item_id, request=req4))
         yield self._env.process(self.process_at_station(self.stations[5], item_id))
 
         if random.random() < 0.05:
             self.faulty_products += 1
         else:
             self.total_produced += 1
-
 
     def process_at_station(self, station, item_id, request=None):
         if request is not None:

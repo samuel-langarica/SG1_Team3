@@ -27,6 +27,7 @@ class Station:
         self.fail_prob = fail_prob
         self.fix_time_mean = fix_time_mean
         self.work_time_mean = work_time_mean
+        self.total_waiting_time = 0
 
         # To handle "check every 5 products" logic:
         self.count_since_check = 0  # how many have been processed since last failure check
@@ -119,6 +120,8 @@ class Factory(object):
             stations.append(Station(env, i+1, self, fail_prob=fail_probs[i]))
         self.stations = stations
         self.action = env.process(self.production())
+        self.total_wait_time = 0.0
+        self.num_waits = 0
 
     def production(self):
         while True:
@@ -152,17 +155,32 @@ class Factory(object):
         else:
             self.total_produced += 1
 
+    def waiting_end(self, wait_start, station):
+        if station.station_id != 1:
+            wait_end = self._env.now
+            wait_time = wait_end - wait_start
+            print(f"wait time: {wait_time}")
+            self.total_wait_time += wait_time
+            station.total_waiting_time += wait_time
+            self.num_waits += 1
+
     def process_at_station(self, station, item_id, request=None):
+        wait_start = self._env.now
         if request is not None:
             yield request
+            self.waiting_end(wait_start, station)
             yield self._env.process(station.process_item())
             station.resource.release(request)
         else:
             with station.resource.request() as req:
                 yield req
+                self.waiting_end(wait_start,station)
                 yield self._env.process(station.process_item())
 
-        print(f"Time {self._env.now}: Item {item_id} finished at Station {station.station_id}")
+
+        print(f"Time {self._env.now:.2f}: Item {item_id} finished at Station {station.station_id}")
+
+
 
 
 env = simpy.Environment()
@@ -174,11 +192,14 @@ env.run(until=5000)
 print(f"Simulation ended at time={env.now}")
 print(f"Total produced (non-faulty) items: {factory.total_produced}")
 print(f"Faulty products: {factory.faulty_products}")
-print(f"Accidents occurred: {factory.accidents_occurred}")
+print(f"Faulty products rate: {(factory.faulty_products/(factory.faulty_products + factory.total_produced))*100:.2f}%")
+print(f"Total time spent waiting for a Station: {factory.total_wait_time:.2f}")
 
+print(f"Average bottleneck delay: {factory.total_wait_time/factory.num_waits:.2f} time units")
 for i, station in enumerate(factory.stations):
     occupancy_rate = station.busy_time / env.now
     print(f"Station {station.station_id}:")
     print(f"  - Occupancy (busy) rate: {occupancy_rate * 100:.2f}%")
     print(f"  - Total downtime: {station.total_downtime:.2f}")
     print(f"  - Number of breakdowns: {station.num_breakdowns}")
+    print(f"  - Total time items waited to be processed: {station.total_waiting_time:.2f}")

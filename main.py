@@ -1,6 +1,13 @@
 import simpy
 import random
 
+# Time scaling constants (in seconds)
+HOUR = 3600
+DAY = 24 * HOUR
+WEEK = 7 * DAY
+MONTH = 30 * DAY
+QUARTER = 90 * DAY
+YEAR = 365 * DAY
 
 def normal_time(mean=4.0, std_dev=1.0):
     """Return a truncated normal sample (no negative times)."""
@@ -25,8 +32,8 @@ class Station:
         self.station_id = station_id
         self.resource = simpy.Resource(env, capacity=1)  # Only 1 item at a time
         self.fail_prob = fail_prob
-        self.fix_time_mean = fix_time_mean
-        self.work_time_mean = work_time_mean
+        self.fix_time_mean = fix_time_mean * HOUR  # Convert to seconds
+        self.work_time_mean = work_time_mean * HOUR  # Convert to seconds
         self.total_waiting_time = 0
 
         # To handle "check every 5 products" logic:
@@ -84,14 +91,14 @@ class Station:
                 with factory.restock_devices.request() as req:
                     yield req
                     start_restocking_time = self.env.now
-                    delay = normal_time(mean=2.0, std_dev=1.0)
+                    delay = normal_time(mean=2.0, std_dev=1.0) * HOUR  # Convert to seconds
                     yield self.env.timeout(delay)
                     self.restocking_time += (self.env.now - start_restocking_time)
                     yield self.bin.put(25)
                     self.record_status_change('Operational')
             else:
                 # Check less frequently if still enough material
-                yield self.env.timeout(1.0)
+                yield self.env.timeout(1.0 * HOUR)  # Check every hour
 
     def break_station(self):
         """Simulate the breakdown."""
@@ -113,7 +120,7 @@ class Station:
 
     def process_item(self):
         while self.is_broken:
-            yield self.env.timeout(0.1)
+            yield self.env.timeout(0.1 * HOUR)  # Check every 6 minutes
 
         yield self.bin.get(1)
 
@@ -146,7 +153,7 @@ class Factory(object):
     def production(self):
         while True:
             self.items += 1
-            waiting_time = abs(random.normalvariate(3, 0.5))
+            waiting_time = abs(random.normalvariate(3, 0.5)) * HOUR  # Convert to seconds
             yield self._env.timeout(waiting_time)
             item_id = self.items
             self._env.process(self.item_processor(item_id))
@@ -196,7 +203,9 @@ class Factory(object):
                 self.waiting_end(wait_start,station)
                 yield self._env.process(station.process_item())
 
-env = simpy.Environment()
-factory = Factory(env)
-env.run(until=5000)
-print("Simulation completed")
+if __name__ == '__main__':
+    env = simpy.Environment()
+    factory = Factory(env)
+    # Run simulation for 1 year
+    env.run(until=YEAR)
+    print("Simulation completed")

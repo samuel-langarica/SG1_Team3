@@ -1,0 +1,4 @@
+simpy==4.0.2
+dash==2.14.2
+plotly==5.18.0
+pandas==2.2.0 

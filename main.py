@@ -43,9 +43,24 @@ class Station:
         self.last_start_busy = 0.0  # track when station last started processing an item
         self.env.process(self.restock_process(factory))
         self.restocking_time = 0.0
+        
+        # Track status changes
+        self.status_history = []
+        self.current_status = 'Operational'
+        self.record_status_change('Operational')
+
+    def record_status_change(self, new_status: str):
+        """Record a status change with timestamp."""
+        self.status_history.append({
+            'timestamp': self.env.now,
+            'station_id': self.station_id,
+            'status': new_status
+        })
+        self.current_status = new_status
 
     def start_processing(self):
         self.last_start_busy = self.env.now
+        self.record_status_change('Operational')
 
     def finish_processing(self):
         self.busy_time += (self.env.now - self.last_start_busy)
@@ -65,6 +80,7 @@ class Station:
     def restock_process(self, factory):
         while True:
             if self.bin.level < 5:
+                self.record_status_change('Waiting for restock')
                 with factory.restock_devices.request() as req:
                     yield req
                     start_restocking_time = self.env.now
@@ -72,6 +88,7 @@ class Station:
                     yield self.env.timeout(delay)
                     self.restocking_time += (self.env.now - start_restocking_time)
                     yield self.bin.put(25)
+                    self.record_status_change('Operational')
             else:
                 # Check less frequently if still enough material
                 yield self.env.timeout(1.0)
@@ -81,6 +98,7 @@ class Station:
         self.is_broken = True
         self.num_breakdowns += 1
         self.last_break_time = self.env.now
+        self.record_status_change('Down')
 
         # Maintenance takes exponentially distributed time
         fix_time = exponential_time(self.fix_time_mean)
@@ -91,6 +109,7 @@ class Station:
         down_duration = self.env.now - self.last_break_time
         self.total_downtime += down_duration
         self.last_break_time = None
+        self.record_status_change('Operational')
 
     def process_item(self):
         while self.is_broken:
@@ -160,11 +179,9 @@ class Factory(object):
         if station.station_id != 1:
             wait_end = self._env.now
             wait_time = wait_end - wait_start
-            print(f"wait time: {wait_time}")
             self.total_wait_time += wait_time
             station.total_waiting_time += wait_time
             self.num_waits += 1
-
 
     def process_at_station(self, station, item_id, request=None):
         wait_start = self._env.now
@@ -179,32 +196,7 @@ class Factory(object):
                 self.waiting_end(wait_start,station)
                 yield self._env.process(station.process_item())
 
-
-        print(f"Time {self._env.now:.2f}: Item {item_id} finished at Station {station.station_id}")
-
-
-
-
 env = simpy.Environment()
 factory = Factory(env)
-print()
-# env.process(customer_arrival(env))
-# env.process(alarm(env, 30, bank))
 env.run(until=5000)
-print(f"Simulation ended at time={env.now}")
-print(f"Total produced (non-faulty) items: {factory.total_produced}")
-print(f"Faulty products: {factory.faulty_products}")
-print(f"Faulty products rate: {(factory.faulty_products/(factory.faulty_products + factory.total_produced))*100:.2f}%")
-print(f"Total time spent waiting for a Station: {factory.total_wait_time:.2f}")
-
-print(f"Average bottleneck delay: {factory.total_wait_time/factory.num_waits:.2f} time units")
-total_restocking_time = 0
-for i, station in enumerate(factory.stations):
-    occupancy_rate = station.busy_time / env.now
-    total_restocking_time += station.restocking_time
-    print(f"Station {station.station_id}:")
-    print(f"  - Occupancy (busy) rate: {occupancy_rate * 100:.2f}%")
-    print(f"  - Total time getting fixed: {station.total_downtime:.2f}")
-    print(f"  - Number of breakdowns: {station.num_breakdowns}")
-    print(f"  - Total time items waited to be processed: {station.total_waiting_time:.2f}")
-print(f"Restocking device occupancy (busy) rate: {(total_restocking_time / env.now)*100:.2f}%")
+print("Simulation completed")

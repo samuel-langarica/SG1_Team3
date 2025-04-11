@@ -544,4 +544,12 @@ if __name__ == '__main__':
     env.run(until=YEAR)
     
     app = create_dashboard(factory, env.now)
-    app.run_server(debug=True) 
+    app.run_server(debug=True)
+else:
+    # For Gunicorn
+    from main import Factory, simpy, YEAR
+    env = simpy.Environment()
+    factory = Factory(env)
+    env.run(until=YEAR)
+    app = create_dashboard(factory, env.now)
+    server = app.server 

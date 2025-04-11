@@ -66,32 +66,42 @@ def calculate_workstation_occupancy(factory, simulation_time: float, time_period
 
 def calculate_average_waiting_time(factory, time_period: str = None) -> Dict[int, float]:
     avg_waiting_times = {}
-    if time_period:
-        start_time, end_time = get_time_period_range(time_period, factory._env.now)
-        time_range = end_time - start_time
-    else:
-        time_range = factory._env.now
     
     for station in factory.stations:
         if station.station_id == 1:  # Skip first station as per requirements
             continue
-        
+            
         if time_period:
-            # Filter waiting events for the time period
+            # For time period filtering, we need to look at the status history
+            start_time, end_time = get_time_period_range(time_period, factory._env.now)
             filtered_history = filter_station_history(station, start_time, end_time)
-            waiting_events = [event for event in filtered_history if event['status'] == 'Waiting']
-            if waiting_events:
-                total_wait_time = sum(event['timestamp'] - waiting_events[i-1]['timestamp'] 
-                                    for i, event in enumerate(waiting_events[1:], 1))
-                avg_wait = total_wait_time / len(waiting_events) / HOUR  # Convert to hours
-            else:
-                avg_wait = 0.0
+            
+            # Calculate waiting time from status changes
+            total_wait_time = 0
+            wait_start = None
+            
+            for event in filtered_history:
+                if event['status'] == 'Waiting' and wait_start is None:
+                    wait_start = event['timestamp']
+                elif event['status'] != 'Waiting' and wait_start is not None:
+                    total_wait_time += event['timestamp'] - wait_start
+                    wait_start = None
+            
+            # Handle case where station is still waiting at end of period
+            if wait_start is not None:
+                total_wait_time += end_time - wait_start
+                
+            # Convert to hours
+            avg_wait = total_wait_time / HOUR
         else:
+            # For overall average, use the accumulated waiting time
             if factory.num_waits > 0:
-                avg_wait = station.total_waiting_time / factory.num_waits / HOUR  # Convert to hours
+                avg_wait = station.total_waiting_time / factory.num_waits / HOUR
             else:
                 avg_wait = 0.0
+                
         avg_waiting_times[station.station_id] = avg_wait
+        
     return avg_waiting_times
 
 def get_workstation_status_partition(factory, time_intervals: List[Tuple[float, float]], time_period: str = None) -> Dict[int, Dict[str, float]]:

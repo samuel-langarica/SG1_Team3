@@ -40,7 +40,8 @@ def create_dashboard(factory, simulation_time):
             if event['status'] == 'Operational':
                 production_trend.append({
                     'timestamp': event['timestamp'],
-                    'production': 1
+                    'production': 1,
+                    'station_id': station.station_id
                 })
     
     production_df = pd.DataFrame(production_trend)
@@ -101,6 +102,10 @@ def create_dashboard(factory, simulation_time):
         'Average Waiting Time': list(waiting_times.values())
     }).sort_values('Average Waiting Time', ascending=False)
     
+    # Ensure we have valid waiting times
+    waiting_df['Average Waiting Time'] = waiting_df['Average Waiting Time'].fillna(0)
+    
+    # list of colors, highlighting station 3
     colors = [THEME['secondary'] if station != 3 else THEME['warning'] 
               for station in waiting_df['Station']]
     
@@ -108,7 +113,10 @@ def create_dashboard(factory, simulation_time):
         go.Bar(
             x=waiting_df['Station'],
             y=waiting_df['Average Waiting Time'],
-            marker_color=colors
+            marker_color=colors,
+            text=waiting_df['Average Waiting Time'].round(2),
+            textposition='auto',
+            hovertemplate='Station %{x}<br>Average Wait: %{y:.2f} hours<extra></extra>'
         )
     ])
     waiting_fig.update_layout(
@@ -118,8 +126,19 @@ def create_dashboard(factory, simulation_time):
         plot_bgcolor=THEME['card'],
         paper_bgcolor=THEME['background'],
         font=dict(color=THEME['text']),
-        xaxis=dict(gridcolor=THEME['border']),
-        yaxis=dict(gridcolor=THEME['border'])
+        xaxis=dict(
+            gridcolor=THEME['border'],
+            type='category',
+            tickmode='array',
+            tickvals=waiting_df['Station'],
+            ticktext=[f'Station {s}' for s in waiting_df['Station']]
+        ),
+        yaxis=dict(
+            gridcolor=THEME['border'],
+            zeroline=True,
+            zerolinecolor=THEME['border']
+        ),
+        showlegend=False
     )
     
     # status partition visualization with dark theme
@@ -150,6 +169,22 @@ def create_dashboard(factory, simulation_time):
         xaxis=dict(gridcolor=THEME['border']),
         yaxis=dict(gridcolor=THEME['border'])
     )
+    
+    # Create station toggle switches
+    station_toggles = []
+    for station in factory.stations:
+        station_toggles.append(
+            html.Div([
+                html.Label(f'Station {station.station_id}', 
+                          style={'color': THEME['text'], 'marginRight': '10px'}),
+                dcc.Checklist(
+                    id=f'station-{station.station_id}-toggle',
+                    options=[{'label': '', 'value': station.station_id}],
+                    value=[station.station_id],
+                    style={'display': 'inline-block'}
+                )
+            ], style={'display': 'inline-block', 'marginRight': '20px'})
+        )
     
     # dashboard layout
     app.layout = html.Div([
@@ -187,6 +222,17 @@ def create_dashboard(factory, simulation_time):
                         'border': f'1px solid {THEME["border"]}'
                     }
                 )
+            ], style={'textAlign': 'center', 'marginBottom': '20px'}),
+            
+            # Station Toggles
+            html.Div([
+                html.Label('Filter Stations:', style={
+                    'marginRight': '10px', 
+                    'fontSize': '20px',
+                    'color': THEME['text'],
+                    'fontFamily': 'monospace'
+                }),
+                html.Div(station_toggles, style={'display': 'inline-block'})
             ], style={'textAlign': 'center', 'marginBottom': '20px'})
         ], style={
             'position': 'fixed',
@@ -222,7 +268,7 @@ def create_dashboard(factory, simulation_time):
                         html.Span("✨", style={'fontSize': '20px'}),
                     ], style={'textAlign': 'center', 'fontSize': '18px', 'marginBottom': '10px', 'color': THEME['text']}),
                     html.P([
-                        "Keep an eye on Station 3, it is highlighted in red because it is the current bottleneck. ",
+                        "Keep an eye on Station 3, it is highlighted because it is the current bottleneck. ",
                         html.Span("⚠️", style={'fontSize': '20px'}),
                         " We got some recommendations at the bottom to help improve things! ",
                         html.Span("💡", style={'fontSize': '20px'}),
@@ -317,7 +363,7 @@ def create_dashboard(factory, simulation_time):
         ], style={'padding': '20px', 'backgroundColor': THEME['background']})
     ], style={'backgroundColor': THEME['background']})
     
-    # Callback to update all metrics and graphs based on time period selection
+    # Callback to update all metrics and graphs based on time period and station selection
     @app.callback(
         [dash.dependencies.Output('total-production', 'children'),
          dash.dependencies.Output('faulty-rate', 'children'),
@@ -325,27 +371,41 @@ def create_dashboard(factory, simulation_time):
          dash.dependencies.Output('occupancy-graph', 'figure'),
          dash.dependencies.Output('waiting-graph', 'figure'),
          dash.dependencies.Output('status-graph', 'figure')],
-        [dash.dependencies.Input('time-period-dropdown', 'value')]
+        [dash.dependencies.Input('time-period-dropdown', 'value')] +
+        [dash.dependencies.Input(f'station-{station.station_id}-toggle', 'value') 
+         for station in factory.stations]
     )
-    def update_metrics(time_period):
-        # Calculate metrics for the selected time period
+    def update_metrics(time_period, *station_toggles):
+        # Get list of enabled stations
+        enabled_stations = []
+        for i, station in enumerate(factory.stations):
+            if station_toggles[i]:  # If station is enabled
+                enabled_stations.append(station.station_id)
+        
+        # Calculate metrics for the selected time period and stations
         total_production, production_rate = calculate_overall_production(factory, simulation_time, time_period)
         faulty_rate = (factory.faulty_products / (factory.faulty_products + total_production)) * 100
-        occupancy_rates = calculate_workstation_occupancy(factory, simulation_time, time_period)
-        waiting_times = calculate_average_waiting_time(factory, time_period)
-        status_partitions = get_workstation_status_partition(factory, [(0, simulation_time)], time_period)
+        
+        # Filter metrics for enabled stations
+        occupancy_rates = {k: v for k, v in calculate_workstation_occupancy(factory, simulation_time, time_period).items() 
+                         if k in enabled_stations}
+        waiting_times = {k: v for k, v in calculate_average_waiting_time(factory, time_period).items() 
+                        if k in enabled_stations}
+        status_partitions = {k: v for k, v in get_workstation_status_partition(factory, [(0, simulation_time)], time_period).items() 
+                           if k in enabled_stations}
         
         # Update production trend graph
         if time_period:
             start_time, end_time = get_time_period_range(time_period, simulation_time)
             filtered_trend = [event for event in production_trend 
-                            if start_time <= event['timestamp'] <= end_time]
+                            if start_time <= event['timestamp'] <= end_time and
+                            event['station_id'] in enabled_stations]
             trend_df = pd.DataFrame(filtered_trend)
             trend_df['timestamp'] = pd.to_datetime(trend_df['timestamp'], unit='s')
             trend_df = trend_df.sort_values('timestamp')
             trend_df['cumulative_production'] = trend_df['production'].cumsum()
         else:
-            trend_df = production_df
+            trend_df = production_df[production_df['station_id'].isin(enabled_stations)]
         
         production_trend_fig = go.Figure(data=[
             go.Scatter(
@@ -399,6 +459,10 @@ def create_dashboard(factory, simulation_time):
             'Average Waiting Time': list(waiting_times.values())
         }).sort_values('Average Waiting Time', ascending=False)
         
+        # Ensure we have valid waiting times
+        waiting_df['Average Waiting Time'] = waiting_df['Average Waiting Time'].fillna(0)
+        
+        # list of colors, highlighting station 3
         colors = [THEME['secondary'] if station != 3 else THEME['warning'] 
                   for station in waiting_df['Station']]
         
@@ -406,7 +470,10 @@ def create_dashboard(factory, simulation_time):
             go.Bar(
                 x=waiting_df['Station'],
                 y=waiting_df['Average Waiting Time'],
-                marker_color=colors
+                marker_color=colors,
+                text=waiting_df['Average Waiting Time'].round(2),
+                textposition='auto',
+                hovertemplate='Station %{x}<br>Average Wait: %{y:.2f} hours<extra></extra>'
             )
         ])
         waiting_fig.update_layout(
@@ -416,8 +483,19 @@ def create_dashboard(factory, simulation_time):
             plot_bgcolor=THEME['card'],
             paper_bgcolor=THEME['background'],
             font=dict(color=THEME['text']),
-            xaxis=dict(gridcolor=THEME['border']),
-            yaxis=dict(gridcolor=THEME['border'])
+            xaxis=dict(
+                gridcolor=THEME['border'],
+                type='category',
+                tickmode='array',
+                tickvals=waiting_df['Station'],
+                ticktext=[f'Station {s}' for s in waiting_df['Station']]
+            ),
+            yaxis=dict(
+                gridcolor=THEME['border'],
+                zeroline=True,
+                zerolinecolor=THEME['border']
+            ),
+            showlegend=False
         )
         
         # Update status partition chart
